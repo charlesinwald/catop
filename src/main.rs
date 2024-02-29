@@ -7,10 +7,17 @@ use crossterm::{
 };
 use tokio::time::{sleep, Duration};
 extern crate systemstat;
-use std::{error::Error, io};
+use std::{error::Error, io, os::linux::net};
+use sysinfo::System as Sys;
 use systemstat::{Platform, System};
 use termion::raw::IntoRawMode;
-use tui::{backend::Backend, layout::Rect, widgets::Sparkline, Frame};
+use tui::{
+    backend::Backend,
+    layout::Rect,
+    style::Modifier,
+    widgets::{Cell, Gauge, Row, Sparkline, Table},
+    Frame,
+};
 use tui::{
     backend::CrosstermBackend, // Connects `tui` with `crossterm` for terminal backend operations.
     layout::{Constraint, Direction, Layout},
@@ -29,11 +36,6 @@ fn cpu_load(sys: &System) -> String {
 }
 
 fn ram_load_string(sys: &System) -> String {
-    // if let Ok((total, free)) = sys.memory() {
-    //     format!("RAM ⚙ {}%", ((total-free).as_u64()) * 100 / total as u64)
-    // } else {
-    //      "⚙ _".to_string()
-    // }
     if let Ok(mem) = sys.memory() {
         format!(
             "RAM ⚙ {:.2}%",
@@ -44,73 +46,64 @@ fn ram_load_string(sys: &System) -> String {
     }
 }
 
-// fn ram_load(sys: &System) -> Result<u64, Box<dyn std::error::Error>> {
-//     match sys.memory() {
-//         Ok(mem) => {
-//             let used = mem.total - mem.free;
-//             Ok((used * 100 / mem.total) as u64) // Convert to percentage and return
-//          }
-//         Err(e) => Err(Box::new(e)), // Wrap the error in a Box for returning it as Result
-//     }
-// }
-
-async fn ram_load(sys: &System) -> Result<u64, Box<dyn std::error::Error>> {
+fn ram_load(sys: &System) -> Result<u64, Box<dyn std::error::Error>> {
     match sys.memory() {
         Ok(mem) => {
-            let used = mem.total.as_u64() - mem.free.as_u64(); // Correctly calculate used memory
-            let total = mem.total.as_u64();
-
-            let percentage = (used as u64 / total as u64) * 100 as u64;
-            println!(
-                "Used: {}, Total: {}, Percentage: {}",
-                used, total, percentage
-            );
-            Ok(percentage) // Calculate and return the percentage of used memory
+            let mut percentage =
+                (mem.total.as_u64() - mem.free.as_u64()) as f64 * 100.0 / mem.total.as_u64() as f64;
+            let hundred: f64 = 100.0;
+            percentage = hundred - percentage; // Invert the percentage to show the used memory
+            Ok(percentage as u64) // Cast the result back to u64 if needed
         }
-        Err(e) => Err(Box::new(e)), // Wrap the error in a Box for returning it as Result
+        Err(e) => Err(Box::new(e)),
     }
 }
 
-fn draw_ram_usage_sparkline<B: Backend>(f: &mut Frame<B>, area: Rect, ram_usage_history: Vec<u64>) {
-    let sparkline = Sparkline::default()
-        .block(Block::default().title("RAM Load").borders(Borders::ALL))
-        .data(&ram_usage_history)
-        .style(Style::default().fg(Color::Green));
+fn draw_ram_usage_gauge<B: Backend>(f: &mut Frame<B>, area: Rect, ram_usage_percentage: u64) {
+    let gauge = Gauge::default()
+        .block(Block::default().title("RAM Usage").borders(Borders::ALL))
+        .gauge_style(
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::ITALIC),
+        )
+        .percent(ram_usage_percentage as u16);
 
-    if ram_usage_history.is_empty() {
-        let message = vec![Spans::from(Span::raw("No RAM usage data available"))];
-        let paragraph = Paragraph::new(message).block(Block::default());
-        f.render_widget(paragraph, area);
-    } else {
-        f.render_widget(sparkline, area);
-    }
+    f.render_widget(gauge, area);
 }
 
-async fn fetch_cpu_load(sys: &System) -> Result<f32, Box<dyn Error>> {
-    let cpu_load = sys.cpu_load_aggregate().unwrap();
+fn fetch_cpu_load(sys: &System) -> Result<f32, Box<dyn Error>> {
+    let cpu_load_future = sys.cpu_load_aggregate()?;
     // We wait for 1 second to get the CPU load measurement.
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let cpu_load = cpu_load.done().unwrap();
-
-    // Here, we return the total CPU load as a percentage.
-    // You can adjust this to return user, system, or idle load specifically if preferred.
+    tokio::time::sleep(Duration::from_secs(1));
+    let cpu_load = cpu_load_future.done()?;
     Ok(cpu_load.user * 100.0)
 }
 
-fn draw_cpu_usage_sparkline<B: Backend>(f: &mut Frame<B>, area: Rect, cpu_usage_history: Vec<u64>) {
-    let sparkline = Sparkline::default()
+fn draw_cpu_usage_gauge<B: Backend>(f: &mut Frame<B>, area: Rect, cpu_usage_percentage: f32) {
+    let gauge = Gauge::default()
         .block(Block::default().title("CPU Load").borders(Borders::ALL))
-        .data(&cpu_usage_history)
-        .style(Style::default().fg(Color::Green));
-    // If there is no data, show a message
-    if cpu_usage_history.is_empty() {
-        let message = vec![Spans::from(Span::raw("No CPU usage data available"))];
-        let paragraph = Paragraph::new(message).block(Block::default());
-        f.render_widget(paragraph, area);
-        return;
-    } else {
-        f.render_widget(sparkline, area);
-    }
+        .gauge_style(Style::default().fg(Color::Green))
+        .percent(cpu_usage_percentage as u16 + 1);
+
+    f.render_widget(gauge, area);
+}
+
+fn fetch_processes() -> Vec<(String, String, String, String)> {
+    let mut sys = Sys::new_all();
+    sys.refresh_all();
+
+    sys.processes()
+        .iter()
+        .map(|(&pid, process)| {
+            (
+                pid.to_string(),
+                process.name().to_string(),
+                format!("{:.2}%", process.cpu_usage()),
+                format!("{} KB", process.memory()),
+            )
+        })
+        .collect()
 }
 
 fn separated(s: String) -> String {
@@ -138,9 +131,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     stdout.execute(terminal::EnterAlternateScreen)?;
     terminal::enable_raw_mode()?;
     terminal.backend_mut().execute(Hide)?;
-    // let mut last_cpu_load: Option = None;
-    let mut cpu_usage_history: Vec<u64> = vec![];
-    let mut ram_usage_history: Vec<u64> = vec![];
 
     'mainloop: loop {
         // Check for keyboard events
@@ -155,18 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        let cpu_load = fetch_cpu_load(&sys).await?;
-        cpu_usage_history.push(cpu_load as u64);
-        if cpu_usage_history.len() > 20 {
-            cpu_usage_history.remove(0);
-        }
-        let ram_load = ram_load(&sys).await?; // This will return an error if fetch_cpu_load is unsuccessful
-        if (ram_load as u64) < 100 {
-            ram_usage_history.push(ram_load);
-            println!("RAM Load: {}", ram_load);
-        } else {
-            eprintln!("Could not get memory stats"); // Handle error if it occurs while fetching RAM load
-        }
+        let cpu_load = fetch_cpu_load(&sys);
 
         // Redraw UI
         terminal.draw(|f| {
@@ -175,28 +154,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .direction(Direction::Vertical) // The boxes are vertically stacked one on top of each other
                 .margin(1)
                 .constraints([
-                    Constraint::Percentage(25),
-                    Constraint::Percentage(50),
-                    Constraint::Percentage(25),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(70),
                 ]) // Add a third percentage constraint
                 .split(size);
 
             let current_status = status(&sys);
-            let cpu_paragraph = Paragraph::new(current_status).block(
-                Block::default()
-                    .title("System Status")
-                    .borders(Borders::ALL),
-            );
-            f.render_widget(cpu_paragraph, chunks[0]);
-            if ram_usage_history.len() > 1 {
-                draw_ram_usage_sparkline(f, chunks[1], ram_usage_history.clone());
+            // let system_stats_paragraph = Paragraph::new(format!("{}", current_status))
+            //     .block(Block::default().title("System Stats").borders(Borders::ALL));
+            // f.render_widget(system_stats_paragraph, chunks[0]);
+            draw_cpu_usage_gauge(f, chunks[0], cpu_load.unwrap());
+            let ram_load = ram_load(&sys); // This will return an error if fetch_cpu_load is unsuccessful
+            let ram_load_value = 100 - ram_load.unwrap() as u64;
+            if (ram_load_value > 0) {
+                draw_ram_usage_gauge(f, chunks[1], ram_load_value);
             // Render RAM usage sparkline if available data exists
             } else {
                 let message = vec![Spans::from(Span::raw("No RAM usage data available"))];
                 let paragraph = Paragraph::new(message).block(Block::default());
                 f.render_widget(paragraph, chunks[1]); // Render a message if no data exists
             }
-            draw_cpu_usage_sparkline(f, chunks[2], cpu_usage_history.clone());
+            let processes_data = fetch_processes();
+
+            let rows: Vec<Row> = processes_data
+                .into_iter()
+                .map(|(pid, name, cpu, mem)| {
+                    // Create a row for each process
+                    Row::new(vec![
+                        Cell::from(pid),
+                        Cell::from(name),
+                        Cell::from(cpu),
+                        Cell::from(mem),
+                    ])
+                })
+                .collect();
+
+            let table = Table::new(rows)
+                .block(Block::default().title("Processes").borders(Borders::ALL))
+                .highlight_style(Style::default().bg(Color::LightGreen)) // Highlight style is optional
+                .widths(&[
+                    Constraint::Length(10), // PID
+                    Constraint::Length(20), // Process Name
+                    Constraint::Length(10), // CPU Usage
+                    Constraint::Length(10), // Memory Usage
+                ]);
+            f.render_widget(table, chunks[3]);
         })?;
 
         sleep(Duration::from_millis(100)).await; // Sleep to throttle the loop
