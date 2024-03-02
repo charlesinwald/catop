@@ -1,6 +1,3 @@
-[]: # Title: CatOp
-[]: # Description: A terminal-based system monitoring application with an ASCII cat animation.
-
 ---
 
 # CatOp
