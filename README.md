@@ -1,4 +1,5 @@
-Certainly! Below is a template for a README file for your project, which you can customize further as needed. This template assumes your project is named "CatOp" and focuses on displaying system metrics with a fun ASCII cat animation.
+[]: # Title: CatOp
+[]: # Description: A terminal-based system monitoring application with an ASCII cat animation.
 
 ---
 
