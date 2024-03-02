@@ -4,6 +4,8 @@
 
 CatOp is a terminal-based application designed to monitor system metrics like CPU and RAM usage, alongside displaying running processes in a tabular format. Built with Rust and leveraging the `tui` and `systemstat` crates, CatOp combines functionality with fun by animating an ASCII art cat whose behavior changes based on your system's CPU load.
 
+![catop screenshot](https://imgur.com/a/i5S55Yk)
+
 ## Features
 
 - **CPU Usage Monitoring**: Displays the current CPU load as a percentage.
