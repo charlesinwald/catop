@@ -2,7 +2,7 @@
 
 # Replace this URL with the actual URL of your catop binary release
 # REMEMBER TO UPDATE THE VERSION NUMBER IN THE URL
-DOWNLOAD_URL="https://github.com/charlesinwald/catop/releases/download/1.0.0/catop"
+DOWNLOAD_URL="https://github.com/charlesinwald/catop/releases/download/1.00/catop"
 
 INSTALL_DIR="$HOME/.local/bin"
 BIN_NAME="catop"
