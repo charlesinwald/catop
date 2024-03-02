@@ -11,10 +11,16 @@ CatOp is a terminal-based application designed to monitor system metrics like CP
 - **Process List**: Lists currently running processes with their PID, name, CPU usage, and memory footprint.
 - **ASCII Cat Animation**: Features an ASCII cat that animates based on the CPU load, adding a playful element to system monitoring.
 
-## Easy Installation
-```bash
-./install.sh
+Quickly install `catop` by running the following command in your terminal:
+
+```sh
+curl -sSL -o install_catop.sh https://raw.githubusercontent.com/charlesinwald/catop/main/install.sh && chmod +x install_catop.sh && ./install_catop.sh
 ```
+
+After installation, you might need to restart your terminal or source your shell configuration file:
+
+- For Bash: `source ~/.bashrc`
+- For Zsh: `source ~/.zshrc`
 
 ## Build from Source
 
