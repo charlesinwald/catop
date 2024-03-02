@@ -84,6 +84,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
 
 [[package]]
+name = "catop"
+version = "1.0.0"
+dependencies = [
+ "crossterm 0.22.1",
+ "sysinfo",
+ "systemstat",
+ "termion",
+ "tokio",
+ "tui",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,18 +592,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "sys_mon_app"
-version = "0.1.0"
-dependencies = [
- "crossterm 0.22.1",
- "sysinfo",
- "systemstat",
- "termion",
- "tokio",
- "tui",
 ]
 
 [[package]]
