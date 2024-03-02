@@ -5,9 +5,9 @@ use crossterm::{
     terminal::{self, disable_raw_mode, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use tokio::time::{sleep, Duration};
+use tokio::time::{self, sleep, Duration};
 extern crate systemstat;
-use std::{error::Error, io, os::linux::net};
+use std::{borrow::Borrow, error::Error, io, os::linux::net, thread};
 use sysinfo::System as Sys;
 use systemstat::{Platform, System};
 use termion::raw::IntoRawMode;
@@ -119,10 +119,36 @@ fn status(sys: &System) -> String {
     separated(cpu_load(sys)) + &separated(ram_load_string(sys))
 }
 
+fn animate_cat<B: Backend>(f: &mut Frame<B>, area: Rect, sys: &System, cat_frames: &[&str]) {
+    let cpu_usage_value = sys.load_average().unwrap().one;
+
+    // Determine the frame index based on CPU usage
+    let frame_index = if cpu_usage_value <= 10.0 { 1 } else { 0 };
+
+    // Calculate left padding based on CPU usage or any other logic
+    let padding_spaces = "-".repeat(cpu_usage_value as usize); // Adjust the number of spaces for padding as needed
+    let padded_cat_art: String = cat_frames[frame_index]
+        .lines()
+        .map(|line| format!("{}{}", padding_spaces, line)) // Prepend each line with padding
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let cat_art = Paragraph::new(padded_cat_art)
+        .block(Block::default().borders(Borders::ALL).title("CPU Cat"));
+    f.render_widget(cat_art, area);
+
+    // Adjust sleep duration based on CPU usage to "animate" cat speed
+    let sleep_duration = if cpu_usage_value < 50.0 {
+        std::time::Duration::from_millis(500)
+    } else {
+        std::time::Duration::from_millis(200)
+    };
+    std::thread::sleep(sleep_duration);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use systemstat::System; // This line is needed to make the render method available in current scope.
-    let sys = System::new();
     let mut stdout = io::stdout().into_raw_mode()?;
 
     let backend = CrosstermBackend::new(stdout);
@@ -133,6 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     terminal.backend_mut().execute(Hide)?;
 
     'mainloop: loop {
+        let sys = System::new();
         // Check for keyboard events
         if event::poll(Duration::from_millis(100))? {
             if let crossterm::event::Event::Key(key) = event::read()? {
@@ -145,8 +172,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        let cpu_load = fetch_cpu_load(&sys);
-
+        let cpu_load_result = fetch_cpu_load(&sys); // Make sure to await the result since it's an async function
+        let cpu_load = match cpu_load_result {
+            Ok(load) => load,
+            Err(_) => 0.0, // In case of error, default to 0.0 or handle as appropriate
+        };
         // Redraw UI
         terminal.draw(|f| {
             let size = f.size();
@@ -156,8 +186,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .constraints([
                     Constraint::Percentage(10),
                     Constraint::Percentage(10),
-                    Constraint::Percentage(10),
-                    Constraint::Percentage(70),
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(65),
                 ]) // Add a third percentage constraint
                 .split(size);
 
@@ -165,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // let system_stats_paragraph = Paragraph::new(format!("{}", current_status))
             //     .block(Block::default().title("System Stats").borders(Borders::ALL));
             // f.render_widget(system_stats_paragraph, chunks[0]);
-            draw_cpu_usage_gauge(f, chunks[0], cpu_load.unwrap());
+            draw_cpu_usage_gauge(f, chunks[0], cpu_load);
             let ram_load = ram_load(&sys); // This will return an error if fetch_cpu_load is unsuccessful
             let ram_load_value = 100 - ram_load.unwrap() as u64;
             if (ram_load_value > 0) {
@@ -176,6 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let paragraph = Paragraph::new(message).block(Block::default());
                 f.render_widget(paragraph, chunks[1]); // Render a message if no data exists
             }
+            let mut sys_obj = Sys::new_all();
             let processes_data = fetch_processes();
 
             let rows: Vec<Row> = processes_data
@@ -201,6 +232,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Constraint::Length(10), // Memory Usage
                 ]);
             f.render_widget(table, chunks[3]);
+            let cat_frames = vec![
+                vec![
+                    " /\\_/\\  ", // Head
+                    "( o.o ) ",   // Eyes
+                    " > ^ <  ",   // Ears
+                    "  )_(  ",    // Body
+                    " /   \\ ",   // Legs
+                ],
+                vec![
+                    " /\\_/\\  ", // Head
+                    "( -.- ) ",   // Eyes
+                    " < ^ >  ",   // Ears
+                    "  )_(  ",    // Body
+                    " /   \\ ",   // Legs
+                ],
+            ]
+            .iter()
+            .map(|frame| frame.join("\n"))
+            .collect::<Vec<String>>();
+
+            animate_cat(
+                f,
+                chunks[2],
+                &sys,
+                &cat_frames.iter().map(AsRef::as_ref).collect::<Vec<&str>>(),
+            );
         })?;
 
         sleep(Duration::from_millis(100)).await; // Sleep to throttle the loop
