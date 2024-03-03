@@ -1,13 +1,13 @@
 use crossterm::{
     cursor::{Hide, Show},
-    event::{self, Event as CEvent, KeyCode, KeyEvent},
+    event::{self, KeyCode},
     execute,
     terminal::{self, disable_raw_mode, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use tokio::time::{self, sleep, Duration};
+use tokio::time::{sleep, Duration};
 extern crate systemstat;
-use std::{borrow::Borrow, error::Error, io, os::linux::net, thread};
+use std::{error::Error, io};
 use sysinfo::System as Sys;
 use systemstat::{Platform, System};
 use termion::raw::IntoRawMode;
@@ -15,7 +15,7 @@ use tui::{
     backend::Backend,
     layout::Rect,
     style::Modifier,
-    widgets::{Cell, Gauge, Row, Sparkline, Table},
+    widgets::{Cell, Gauge, Row, Table},
     Frame,
 };
 use tui::{
@@ -26,25 +26,6 @@ use tui::{
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
-
-fn cpu_load(sys: &System) -> String {
-    if let Ok(load) = sys.load_average() {
-        format!("CPU ⚙ {:.2}%", load.one)
-    } else {
-        "⚙ _".to_string()
-    }
-}
-
-fn ram_load_string(sys: &System) -> String {
-    if let Ok(mem) = sys.memory() {
-        format!(
-            "RAM ⚙ {:.2}%",
-            (mem.total.as_u64() - mem.free.as_u64()) as f64 * 100.0 / mem.total.as_u64() as f64
-        )
-    } else {
-        "⚙ RAM _".to_string()
-    }
-}
 
 fn ram_load(sys: &System) -> Result<u64, Box<dyn std::error::Error>> {
     match sys.memory() {
@@ -74,8 +55,6 @@ fn draw_ram_usage_gauge<B: Backend>(f: &mut Frame<B>, area: Rect, ram_usage_perc
 
 fn fetch_cpu_load(sys: &System) -> Result<f32, Box<dyn Error>> {
     let cpu_load_future = sys.cpu_load_aggregate()?;
-    // We wait for 1 second to get the CPU load measurement.
-    tokio::time::sleep(Duration::from_secs(1));
     let cpu_load = cpu_load_future.done()?;
     Ok(cpu_load.user * 100.0)
 }
@@ -104,19 +83,6 @@ fn fetch_processes() -> Vec<(String, String, String, String)> {
             )
         })
         .collect()
-}
-
-fn separated(s: String) -> String {
-    if s == "" {
-        s
-    } else {
-        s + " ⸱ "
-    }
-}
-
-fn status(sys: &System) -> String {
-    // separated(plugged(sys)) + &separated(battery(sys)) + &separated(ram(sys)) +
-    separated(cpu_load(sys)) + &separated(ram_load_string(sys))
 }
 
 fn animate_cat<B: Backend>(f: &mut Frame<B>, area: Rect, sys: &System, cat_frames: &[&str]) {
@@ -149,7 +115,7 @@ fn animate_cat<B: Backend>(f: &mut Frame<B>, area: Rect, sys: &System, cat_frame
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use systemstat::System; // This line is needed to make the render method available in current scope.
-    let mut stdout = io::stdout().into_raw_mode()?;
+    let stdout = io::stdout().into_raw_mode()?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -191,14 +157,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ]) // Add a third percentage constraint
                 .split(size);
 
-            let current_status = status(&sys);
-            // let system_stats_paragraph = Paragraph::new(format!("{}", current_status))
-            //     .block(Block::default().title("System Stats").borders(Borders::ALL));
-            // f.render_widget(system_stats_paragraph, chunks[0]);
             draw_cpu_usage_gauge(f, chunks[0], cpu_load);
             let ram_load = ram_load(&sys); // This will return an error if fetch_cpu_load is unsuccessful
             let ram_load_value = 100 - ram_load.unwrap() as u64;
-            if (ram_load_value > 0) {
+            if ram_load_value > 0 {
                 draw_ram_usage_gauge(f, chunks[1], ram_load_value);
             // Render RAM usage sparkline if available data exists
             } else {
@@ -206,7 +168,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let paragraph = Paragraph::new(message).block(Block::default());
                 f.render_widget(paragraph, chunks[1]); // Render a message if no data exists
             }
-            let mut sys_obj = Sys::new_all();
             let processes_data = fetch_processes();
 
             let rows: Vec<Row> = processes_data
@@ -265,8 +226,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Cleanup before exiting
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), Show, LeaveAlternateScreen)?;
-    // Cleanup before exiting
-    terminal::disable_raw_mode()?;
     terminal.backend_mut().execute(Show)?;
     terminal
         .backend_mut()
